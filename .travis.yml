@@ -1,0 +1,71 @@
+sudo: required
+language: generic
+services:
+- docker
+env:
+  global:
+  - DOCKER="sfalexrog/img-tool:qemu-update"
+  - TARGET_REPO="https://github.com/${TRAVIS_REPO_SLUG}.git"
+  - if [[ -z ${TRAVIS_TAG} ]]; then IMAGE_VERSION="${TRAVIS_COMMIT}}"; else IMAGE_VERSION="${TRAVIS_TAG}"; fi
+  - IMAGE_NAME="navtalink-pelican_${IMAGE_VERSION}.img"
+git:
+  depth: 50
+jobs:
+  fast_finish: true
+  include:
+  - stage: Build
+    name: Raspberry Pi Image Build
+    cache:
+      directories:
+      - imgcache
+    before_script:
+    - mkdir -p lib
+    - pushd lib
+    - wget -O pixymon_src-1.0.2beta.zip https://cdn.shopify.com/s/files/1/0599/7905/files/pixymon_src-1.0.2beta.zip?1607987262528906640
+    - unzip pixymon_src-1.0.2beta.zip
+    - pushd pixymon-1.0.2beta/src/host/pixymon
+    - patch < ~/build/CopterExpress/navtalink-pelican-ci/builder/assets/pixymon.pro.patch
+    - popd
+    - popd
+    - pwd
+    - docker pull ${DOCKER}
+    - if [ -n "$(ls -A imgcache/*.zip)" ]; then mkdir -p images && cp imgcache/*.zip
+      images; fi
+    script:
+    - docker run --privileged --rm -v /dev:/dev -v $(pwd):/builder/repo
+      -e TRAVIS_TAG="${TRAVIS_TAG}" -e ORIGIN_IMAGE_VERSION="${ORIGIN_IMAGE_VERSION}"
+      -e ORIGIN_IMAGE_REPO="${ORIGIN_IMAGE_REPO}"
+      -e GITHUB_OAUTH_TOKEN="${GITHUB_OAUTH_TOKEN}"
+      -e QGC_REPO="${QGC_REPO}" -e QGC_VERSION="${QGC_VERSION}"
+      -e QGC_ASSET="${QGC_ASSET}"
+      ${DOCKER}
+    before_cache:
+    - cp images/*.zip imgcache
+    before_deploy:
+    - git config --local user.name "${GITHUB_USER}"
+    - git config --local user.email "${GITHUB_USER_EMAIL}"
+    - sudo chmod -R 777 *
+    - cd images && zip ${IMAGE_NAME}.zip ${IMAGE_NAME}
+    deploy:
+      provider: releases
+      api_key: "${GITHUB_OAUTH_TOKEN}"
+      file: "${IMAGE_NAME}.zip"
+      skip_cleanup: true
+      on:
+        tags: true
+      draft: true
+      name: "${TRAVIS_TAG}"
+      repo: "${RELEASES_REPO}"
+  - stage: Annotate
+    name: Auto-generate changelog
+    language: python
+    python: 3.6
+    install:
+      - pip install GitPython PyGithub
+    before_script:
+    script:
+      # - PYTHONUNBUFFERED=1 python ./gen_changelog.py
+      - true
+stages:
+- Build
+- Annotate
